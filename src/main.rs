@@ -21,7 +21,7 @@ fn main() -> Result<(), eframe::Error> {
     };
     
     eframe::run_native(
-        "File Viewer",
+        "tty_doc",
         options,
         Box::new(move |_cc| Box::new(MyApp::new(file_path))),
     )
@@ -81,7 +81,7 @@ impl Default for MyApp {
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("File Viewer");
+            ui.heading("View Mode");
             ui.separator();
             
             // Display file path
@@ -96,7 +96,7 @@ impl eframe::App for MyApp {
             } else {
                 // Display file content in a scrollable area
                 egui::ScrollArea::vertical()
-                    .max_height(400.0)
+                    .max_height(800.0)
                     .show(ui, |ui| {
                         ui.add(
                             egui::TextEdit::multiline(&mut self.file_content.as_str())
