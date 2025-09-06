@@ -16,10 +16,11 @@ fn main() -> Result<(), eframe::Error> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([640.0, 480.0]), // Made window larger for file content
+            .with_inner_size([800.0, 600.0])
+            .with_title("TTY Doc - Text File Viewer"),
         ..Default::default()
     };
-    
+
     eframe::run_native(
         "tty_doc",
         options,
@@ -31,6 +32,7 @@ struct MyApp {
     file_path: String,
     file_content: String,
     error_message: Option<String>,
+    font_size: f32,
 }
 
 impl MyApp {
@@ -39,23 +41,24 @@ impl MyApp {
             file_path: file_path.clone(),
             file_content: String::new(),
             error_message: None,
+            font_size: 14.0,
         };
-        
+
         if !file_path.is_empty() {
             app.load_file();
         } else {
-            app.error_message = Some("No file path provided".to_string());
+            app.error_message = Some("No file path provided. Usage: tty_doc <file_path>".to_string());
         }
         
         app
     }
-    
+
     fn load_file(&mut self) {
         if !Path::new(&self.file_path).exists() {
             self.error_message = Some(format!("File not found: {}", self.file_path));
             return;
         }
-        
+
         match fs::read_to_string(&self.file_path) {
             Ok(content) => {
                 self.file_content = content;
@@ -66,6 +69,18 @@ impl MyApp {
             }
         }
     }
+
+    fn get_file_info(&self) -> String {
+        if self.file_content.is_empty() {
+            return String::new();
+        }
+        
+       
+        let chars = self.file_content.chars().count();
+        let bytes = self.file_content.len();
+        
+        format!("Characters: {} | Bytes: {}", chars, bytes)
+    }
 }
 
 impl Default for MyApp {
@@ -73,38 +88,75 @@ impl Default for MyApp {
         Self {
             file_path: String::new(),
             file_content: String::new(),
-            error_message: Some("No file path provided".to_string()),
+            error_message: Some("No file path provided. Usage: tty_doc <file_path>".to_string()),
+            font_size: 14.0,
         }
     }
 }
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Top panel for font size control
+        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Font Size:");
+                ui.add(egui::Slider::new(&mut self.font_size, 8.0..=24.0).text("px"));
+            });
+        });
+
+        // Bottom status bar
+        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if !self.file_path.is_empty() {
+                    ui.label(format!("File: {}", self.file_path));
+                    ui.separator();
+                }
+                ui.label(self.get_file_info());
+            });
+        });
+
+        // Main content area
+        let mut should_reload = false;
+        
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("View Mode");
-            ui.separator();
-            
-            // Display file path
-            if !self.file_path.is_empty() {
-                ui.label(format!("File: {}", self.file_path));
-                ui.separator();
-            }
-            
-            // Display error message if any
-            if let Some(ref error) = self.error_message {
-                ui.colored_label(egui::Color32::RED, error);
+            if let Some(error) = &self.error_message {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(50.0);
+                    ui.colored_label(egui::Color32::RED, "⚠ Error");
+                    ui.label(error);
+                    
+                    if !self.file_path.is_empty() && ui.button("Try Again").clicked() {
+                        should_reload = true;
+                    }
+                });
             } else {
-                // Display file content in a scrollable area
+                // Configure text style based on font size
+                let mut style = ctx.style().as_ref().clone();
+                style.text_styles.insert(
+                    egui::TextStyle::Monospace,
+                    egui::FontId::new(self.font_size, egui::FontFamily::Monospace),
+                );
+                ctx.set_style(style);
+
+                // Display file content
                 egui::ScrollArea::vertical()
-                    .max_height(800.0)
+                    .max_height(f32::INFINITY)
                     .show(ui, |ui| {
+                        let display_content = self.file_content.clone();
+                        
                         ui.add(
-                            egui::TextEdit::multiline(&mut self.file_content.as_str())
+                            egui::TextEdit::multiline(&mut display_content.as_str())
                                 .desired_width(f32::INFINITY)
                                 .font(egui::TextStyle::Monospace)
+                                .interactive(false)
                         );
                     });
             }
         });
+        
+        // Handle file reload after UI to avoid borrowing conflicts
+        if should_reload {
+            self.load_file();
+        }
     }
 }
