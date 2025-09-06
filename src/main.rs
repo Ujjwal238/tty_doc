@@ -2,6 +2,10 @@ use eframe::egui;
 use std::env;
 use std::fs;
 use std::path::Path;
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{ThemeSet, Style};
+use syntect::parsing::SyntaxSet;
+use syntect::util::LinesWithEndings;
 
 fn main() -> Result<(), eframe::Error> {
     // Get command line arguments
@@ -33,15 +37,25 @@ struct MyApp {
     file_content: String,
     error_message: Option<String>,
     font_size: f32,
+    // Syntax highlighting fields
+    syntax_set: SyntaxSet,
+    theme_set: ThemeSet,
+    highlighted_content: Option<Vec<Vec<(Style, String)>>>,
 }
 
 impl MyApp {
     fn new(file_path: String) -> Self {
+        let syntax_set = SyntaxSet::load_defaults_newlines();
+        let theme_set = ThemeSet::load_defaults();
+        
         let mut app = Self {
             file_path: file_path.clone(),
             file_content: String::new(),
             error_message: None,
             font_size: 14.0,
+            syntax_set,
+            theme_set,
+            highlighted_content: None,
         };
 
         if !file_path.is_empty() {
@@ -53,9 +67,56 @@ impl MyApp {
         app
     }
 
+    fn detect_syntax(&self) -> Option<&syntect::parsing::SyntaxReference> {
+        if let Some(extension) = Path::new(&self.file_path).extension() {
+            if let Some(ext_str) = extension.to_str() {
+                if let Some(syntax) = self.syntax_set.find_syntax_by_extension(ext_str) {
+                    return Some(syntax);
+                }
+            }
+        }
+        
+        // Fallback to filename detection
+        self.syntax_set.find_syntax_for_file(&self.file_path).ok().flatten()
+    }
+
+    fn highlight_content(&mut self) {
+        if self.file_content.is_empty() {
+            self.highlighted_content = None;
+            return;
+        }
+
+        let syntax = self.detect_syntax().unwrap_or_else(|| {
+            self.syntax_set.find_syntax_plain_text()
+        });
+
+        let theme = &self.theme_set.themes["base16-ocean.dark"];
+        let mut highlighter = HighlightLines::new(syntax, theme);
+        
+        let mut highlighted_lines = Vec::new();
+        
+        for line in LinesWithEndings::from(&self.file_content) {
+            let ranges = highlighter.highlight_line(line, &self.syntax_set)
+                .unwrap_or_else(|_| vec![(Style::default(), line)]);
+            // Convert &str to String for storage
+            let string_ranges: Vec<(Style, String)> = ranges
+                .into_iter()
+                .map(|(style, text)| (style, text.to_string()))
+                .collect();
+            highlighted_lines.push(string_ranges);
+        }
+        
+        self.highlighted_content = Some(highlighted_lines);
+    }
+
+    fn syntect_color_to_egui(color: syntect::highlighting::Color) -> egui::Color32 {
+        egui::Color32::from_rgb(color.r, color.g, color.b)
+    }
+
     fn load_file(&mut self) {
         if !Path::new(&self.file_path).exists() {
             self.error_message = Some(format!("File not found: {}", self.file_path));
+            self.highlighted_content = None;
             return;
         }
 
@@ -63,9 +124,11 @@ impl MyApp {
             Ok(content) => {
                 self.file_content = content;
                 self.error_message = None;
+                self.highlight_content();
             }
             Err(e) => {
                 self.error_message = Some(format!("Error reading file: {}", e));
+                self.highlighted_content = None;
             }
         }
     }
@@ -75,21 +138,27 @@ impl MyApp {
             return String::new();
         }
         
-       
         let chars = self.file_content.chars().count();
         let bytes = self.file_content.len();
+        let lines = self.file_content.lines().count();
         
-        format!("Characters: {} | Bytes: {}", chars, bytes)
+        format!("Lines: {} | Characters: {} | Bytes: {}", lines, chars, bytes)
     }
 }
 
 impl Default for MyApp {
     fn default() -> Self {
+        let syntax_set = SyntaxSet::load_defaults_newlines();
+        let theme_set = ThemeSet::load_defaults();
+        
         Self {
             file_path: String::new(),
             file_content: String::new(),
             error_message: Some("No file path provided. Usage: tty_doc <file_path>".to_string()),
             font_size: 14.0,
+            syntax_set,
+            theme_set,
+            highlighted_content: None,
         }
     }
 }
@@ -138,18 +207,40 @@ impl eframe::App for MyApp {
                 );
                 ctx.set_style(style);
 
-                // Display file content
+                // Display file content with syntax highlighting
                 egui::ScrollArea::vertical()
                     .max_height(f32::INFINITY)
                     .show(ui, |ui| {
-                        let display_content = self.file_content.clone();
-                        
-                        ui.add(
-                            egui::TextEdit::multiline(&mut display_content.as_str())
-                                .desired_width(f32::INFINITY)
-                                .font(egui::TextStyle::Monospace)
-                                .interactive(false)
-                        );
+                        if let Some(highlighted_lines) = &self.highlighted_content {
+                            // Display syntax highlighted content
+                            for line_ranges in highlighted_lines {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 0.0; // Remove spacing between text segments
+                                    for (style, text) in line_ranges {
+                                        let color = Self::syntect_color_to_egui(style.foreground);
+                                        let rich_text = egui::RichText::new(text)
+                                            .color(color)
+                                            .font(egui::FontId::new(self.font_size, egui::FontFamily::Monospace));
+                                        
+                                        if style.font_style.contains(syntect::highlighting::FontStyle::BOLD) {
+                                            ui.add(egui::Label::new(rich_text.strong()));
+                                        } else if style.font_style.contains(syntect::highlighting::FontStyle::ITALIC) {
+                                            ui.add(egui::Label::new(rich_text.italics()));
+                                        } else {
+                                            ui.add(egui::Label::new(rich_text));
+                                        }
+                                    }
+                                });
+                            }
+                        } else {
+                            // Fallback to plain text
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.file_content.as_str())
+                                    .desired_width(f32::INFINITY)
+                                    .font(egui::TextStyle::Monospace)
+                                    .interactive(false)
+                            );
+                        }
                     });
             }
         });
