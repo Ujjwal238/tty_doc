@@ -53,6 +53,7 @@ struct OllamaOptions {
 #[derive(Deserialize)]
 struct OllamaResponse {
     response: String,
+    #[allow(dead_code)]
     done: bool,
 }
 
@@ -123,6 +124,7 @@ impl MyApp {
                 "mistral".to_string(),
                 "phi".to_string(),
                 "codellama".to_string(),
+                "tinyllama".to_string(),  // Added smaller, faster model
             ],
             show_ai_panel: true,
             ai_panel_width: 400.0,
@@ -255,7 +257,10 @@ impl MyApp {
         }
 
         thread::spawn(move || {
-            let client = reqwest::blocking::Client::new();
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .unwrap();
             
             let request = OllamaRequest {
                 model,
@@ -263,13 +268,14 @@ impl MyApp {
                 stream: false,
                 options: OllamaOptions {
                     temperature: 0.7,
-                    num_predict: 500,
+                    num_predict: 256,  // Reduced for faster responses
                 },
             };
 
             match client
                 .post("http://localhost:11434/api/generate")
                 .json(&request)
+                .timeout(std::time::Duration::from_secs(60))  // Increased timeout
                 .send()
             {
                 Ok(response) => {
